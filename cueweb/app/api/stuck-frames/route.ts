@@ -98,11 +98,26 @@ async function getRunningFrames(job: any): Promise<any[]> {
   return all;
 }
 
-export async function POST(_request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
+    // Optional single-show scope: the Stuck Frames page defaults to one
+    // selected show and sends { show: "<name>" }; the job search then carries
+    // the proto's shows filter so the scan only walks that show's jobs. No
+    // show in the body means the caller explicitly opted into every show.
+    let show = "";
+    try {
+      const body = await request.json();
+      if (typeof body?.show === "string") show = body.show.trim();
+    } catch {
+      // An empty/unparseable body is the all-shows scan.
+    }
     const jobsData = await gatewayJson(
       "/job.JobInterface/GetJobs",
-      JSON.stringify({ r: { include_finished: false } }),
+      JSON.stringify({
+        r: show
+          ? { include_finished: false, shows: [show] }
+          : { include_finished: false },
+      }),
     );
     if (jobsData === null) {
       return NextResponse.json({ error: "Failed to list jobs" }, { status: 500 });

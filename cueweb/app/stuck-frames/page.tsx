@@ -22,7 +22,7 @@ import { useRouter } from "next/navigation";
 import { MessageSquare } from "lucide-react";
 
 import type { Frame } from "@/app/frames/frame-columns";
-import { StuckFrame, getStuckFrames, getStuckFrameLastLine } from "@/app/utils/get_utils";
+import { StuckFrame, getActiveShows, getStuckFrames, getStuckFrameLastLine, type Show } from "@/app/utils/get_utils";
 import { setAttributeSelection } from "@/app/utils/use_attribute_selection";
 import { eatFrames, killFrames, retryFrames, setLayerMinCores } from "@/app/utils/action_utils";
 import { handleError, toastSuccess } from "@/app/utils/notify_utils";
@@ -36,6 +36,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   DEFAULT_FILTER,
@@ -45,6 +52,10 @@ import {
 
 const AUTO_REFRESH_MS = 60000;
 const FILTERS_KEY = "cueweb.stuck-frames.filters";
+const SHOW_KEY = "cueweb.stuck-frames.show";
+// Selector value for the explicit all-shows opt-in; any other value is a
+// show name. The page defaults to a single show (see the resolver effect).
+const ALL_SHOWS = "__all__";
 
 // --- formatting -----------------------------------------------------------
 function fmtDur(seconds: number): string {
@@ -110,6 +121,12 @@ export default function StuckFramesPage() {
   const { data: session } = useSession();
   const username = session?.user?.name ?? session?.user?.email ?? "cueweb";
 
+  // Show scope: the page works one show at a time. `shows` is the active-show
+  // list for the selector; `selectedShow` is null until the mount resolver
+  // picks the persisted show or the default, then a show name or ALL_SHOWS.
+  const [shows, setShows] = React.useState<Show[]>([]);
+  const [selectedShow, setSelectedShow] = React.useState<string | null>(null);
+
   const [raw, setRaw] = React.useState<StuckFrame[] | null>(null);
   const [now, setNow] = React.useState(() => Date.now() / 1000);
   const [filters, setFilters] = React.useState<StuckFilter[]>([{ ...DEFAULT_FILTER }]);
@@ -141,6 +158,45 @@ export default function StuckFramesPage() {
     }
   }, []);
 
+  // Resolve the show scope once on mount: the persisted selection wins when
+  // it is still an active show (or the explicit all-shows opt-in); otherwise
+  // default to the first active show. With no active shows at all, fall back
+  // to the all-shows scan so the page still works.
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let active: Show[] = [];
+      try {
+        active = (await getActiveShows()).slice().sort((a, b) => a.name.localeCompare(b.name));
+      } catch {
+        active = [];
+      }
+      if (cancelled) return;
+      setShows(active);
+      const stored = window.localStorage.getItem(SHOW_KEY);
+      const names = active.map((sh) => sh.name);
+      if (stored === ALL_SHOWS || (stored && names.includes(stored))) {
+        setSelectedShow(stored);
+      } else {
+        setSelectedShow(names[0] ?? ALL_SHOWS);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function changeShow(next: string) {
+    setSelectedShow(next);
+    window.localStorage.setItem(SHOW_KEY, next);
+    // Rows/hidden state from the previous show's scan don't carry over.
+    setHiddenFrames(new Set());
+    setHiddenJobs(new Set());
+    setLastLines({});
+    setRaw(null);
+    setLoadError(null);
+  }
+
   function persistFilters(next: StuckFilter[]) {
     setFilters(next);
     window.localStorage.setItem(FILTERS_KEY, JSON.stringify(next));
@@ -151,7 +207,9 @@ export default function StuckFramesPage() {
   const load = React.useCallback(async (isCancelled?: () => boolean): Promise<StuckFrame[] | null> => {
     setLoading(true);
     try {
-      const data = await getStuckFrames();
+      const data = await getStuckFrames(
+        selectedShow && selectedShow !== ALL_SHOWS ? selectedShow : undefined,
+      );
       if (isCancelled?.()) return null;
       setLoadError(null);
       setRaw(data);
@@ -168,15 +226,16 @@ export default function StuckFramesPage() {
     } finally {
       if (!isCancelled?.()) setLoading(false);
     }
-  }, []);
+  }, [selectedShow]);
 
   React.useEffect(() => {
+    if (selectedShow === null) return; // scope not resolved yet
     let cancelled = false;
     load(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [load, selectedShow]);
 
   // Auto-refresh. CueGUI refreshes ~every 30 min; a web monitor wants fresher
   // data, so this polls every 60s while enabled. Fires a desktop notification
@@ -416,7 +475,29 @@ export default function StuckFramesPage() {
   return (
     <div className="p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">Stuck Frames</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold">Stuck Frames</h1>
+          <label className="flex items-center gap-2 text-sm">
+            Show
+            <Select
+              value={selectedShow ?? undefined}
+              onValueChange={changeShow}
+              disabled={selectedShow === null}
+            >
+              <SelectTrigger className="h-8 w-52" aria-label="Show">
+                <SelectValue placeholder="Loading shows…" />
+              </SelectTrigger>
+              <SelectContent>
+                {shows.map((sh) => (
+                  <SelectItem key={sh.id} value={sh.name}>
+                    {sh.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value={ALL_SHOWS}>All shows</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={autoRefresh} onCheckedChange={(c) => setAutoRefresh(!!c)} aria-label="Auto-refresh" />
@@ -450,7 +531,9 @@ export default function StuckFramesPage() {
           <p className="text-sm text-destructive">{loadError}</p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No stuck frames detected with the current filters.
+            {selectedShow && selectedShow !== ALL_SHOWS
+              ? `No stuck frames detected in show ${selectedShow} with the current filters.`
+              : "No stuck frames detected with the current filters."}
           </p>
         )
       ) : (
@@ -543,7 +626,8 @@ export default function StuckFramesPage() {
 
       {!loading && groups !== null ? (
         <p className="mt-2 text-xs text-muted-foreground">
-          {totalStuck} stuck frame(s) across {groups.length} job(s).
+          {totalStuck} stuck frame(s) across {groups.length} job(s)
+          {selectedShow && selectedShow !== ALL_SHOWS ? ` in show ${selectedShow}` : ""}.
         </p>
       ) : null}
 

@@ -1358,7 +1358,7 @@ Open it from the **CueCommander** menu (or the matching entry in the left sideba
 
 ![Stuck Frame entry in the CueCommander menu](/assets/images/cueweb/cueweb_cuecommander_stuck_frame_menu.png)
 
-The page scans every running frame across all active jobs and lists the ones that match the current detection filters, grouped under their job.
+The page works one show at a time. The **Show** selector at the top of the page picks which show is scanned, and the page lists that show's running frames that match the current detection filters, grouped under their job. Your selected show is saved per browser, so returning to the page keeps you on the show you work on. Pick **All shows** in the selector only when you really need the farm-wide scan; it is slower, because every show's jobs are walked on each refresh.
 
 ![OpenCueWeb Stuck Frames page](/assets/images/cueweb/cueweb_cuecommander_stuck_frame.png)
 

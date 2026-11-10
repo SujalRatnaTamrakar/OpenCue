@@ -277,13 +277,14 @@ export type StuckFrame = Frame & {
     layerMinCores: number;
 };
 
-// Fetch every RUNNING frame across all unfinished jobs (server-aggregated via
+// Fetch RUNNING frames across unfinished jobs (server-aggregated via
 // /api/stuck-frames), each stamped with its service and average frame time.
 // The Stuck Frames page applies the detection thresholds locally so the
-// filters stay instant.
-export async function getStuckFrames(): Promise<StuckFrame[]> {
+// filters stay instant. When `show` is given, the scan is scoped to that
+// single show; omit it only for the page's explicit "All shows" opt-in.
+export async function getStuckFrames(show?: string): Promise<StuckFrame[]> {
     const ENDPOINT = "/api/stuck-frames";
-    const response = await accessGetApi(ENDPOINT, JSON.stringify({}));
+    const response = await accessGetApi(ENDPOINT, JSON.stringify(show ? { show } : {}));
     if (!Array.isArray(response)) {
         throw new Error("Failed to load stuck frames from Cuebot.");
     }
